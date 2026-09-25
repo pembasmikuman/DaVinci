@@ -10,6 +10,14 @@ Inspired by the binary-art hero on Laravel's error page: move your mouse and nea
 
 Open `index.html` in a browser. That's it — one file, no dependencies, works offline.
 
+## KDE Plasma live wallpaper
+
+```sh
+./install.sh
+```
+
+Installs the wallpaper and sets it on every desktop. Run it again after editing `index.html` to update. Needs `qt6-webengine`.
+
 ## How it works
 
 - A grayscale image of the hands is embedded in the file as a data URI.

@@ -1,0 +1,11 @@
+{
+    "KPackageStructure": "Plasma/Wallpaper",
+    "KPlugin": {
+        "Id": "com.pembasmikuman.davinci",
+        "Name": "DaVinci",
+        "Description": "Creation of Adam in 1s and 0s, glows where the mouse goes",
+        "Icon": "preferences-desktop-wallpaper",
+        "License": "MIT"
+    },
+    "X-KDE-ParentApp": "org.kde.plasmashell"
+}
