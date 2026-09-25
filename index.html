@@ -183,6 +183,7 @@
       <legend>Digits</legend>
       <div class="field"><label for="digits">Characters</label><input id="digits" class="text-input" type="text" maxlength="16" placeholder="01" spellcheck="false"></div>
       <div class="field"><label for="bold">Bold</label><input id="bold" class="switch" type="checkbox" role="switch"></div>
+      <div class="field"><label for="detail">Detail</label><input id="detail" class="switch" type="checkbox" role="switch"></div>
     </fieldset>
     <fieldset data-group="glow">
       <legend>Glow</legend>
@@ -230,6 +231,7 @@ function handDefaults() {
 
 const DEFAULTS = {
   background: '', glow: '#f4623c', digits: '01', bold: true, fontSize: 8,
+  detail: true,        // pick each resting character by shape (/ \ | - ...) so edges get drawn, not just shaded
   // Pictures on screen. src is a built-in name or an uploaded image's data URL.
   // Each picture's position, size, rotation and mirror live in <key>x, <key>y, <key>size, <key>rot, <key>flip.
   pieces: HANDS,
@@ -313,6 +315,55 @@ function randomDigit() {
   return set[Math.floor(Math.random() * set.length)];
 }
 
+const font = () => `${settings.bold ? 'bold ' : ''}${settings.fontSize}px ui-monospace, monospace`;
+// Extra shapes offered in detail mode, next to the digits: thin ones for faint cells, slants and bars for edges.
+const SHAPES = '.,-_|/\\+=#';
+
+/**
+ * Draw every candidate character into a cell-sized square once, as ink amounts 0-1 per pixel.
+ * sq is each one's sum of ink squared, the only part of the match score that doesn't depend on the picture.
+ */
+function glyphMasks(cell) {
+  const c = document.createElement('canvas');
+  c.width = c.height = cell;
+  const g = c.getContext('2d', {willReadFrequently: true});
+  g.font = font(); g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillStyle = '#fff';
+  return [...new Set(SHAPES + (settings.digits || '01'))].map(ch => {
+    g.clearRect(0, 0, cell, cell);
+    g.fillText(ch, cell / 2, cell / 2);
+    const a = g.getImageData(0, 0, cell, cell).data, ink = new Float32Array(cell * cell);
+    let sq = 0;
+    for (let i = 0; i < ink.length; i++) { ink[i] = a[i * 4 + 3] / 255; sq += ink[i] * ink[i]; }
+    return {ch, ink, sq};
+  });
+}
+
+/**
+ * Pick the character whose shape is closest to the picture inside one cell (least squared difference).
+ * Minimizing sum (p - ink)^2 is the same as minimizing sq - 2 * sum p*ink, since sum p^2 is fixed.
+ * Returns the character and the brightest pixel's value and position, or null when the cell is dark.
+ */
+function matchCell(lumAt, w, h, x0, y0, cell, glyphs, ref) {
+  const p = new Float32Array(cell * cell);
+  let max = 0, at = -1;
+  for (let dy = 0; dy < cell; dy++) for (let dx = 0; dx < cell; dx++) {
+    const x = x0 + dx, y = y0 + dy;
+    if (x < 0 || y < 0 || x >= w || y >= h) continue;
+    const v = lumAt[y * w + x];
+    p[dy * cell + dx] = v / ref; // the picture's brightest pixel counts as full ink
+    if (v > max) { max = v; at = y * w + x; }
+  }
+  if (max <= 18) return null; // all dark, skip the scoring
+  let best, bestScore = Infinity;
+  for (const gl of glyphs) {
+    let dot = 0;
+    for (let i = 0; i < p.length; i++) dot += p[i] * gl.ink[i];
+    const score = gl.sq - 2 * dot;
+    if (score < bestScore) { bestScore = score; best = gl.ch; }
+  }
+  return {ch: best, lum: max, at};
+}
+
 /** Push the settings that don't change the digit grid into the page and redraw. */
 function applySettings() {
   const d = settings.dim;
@@ -366,23 +417,33 @@ function build() {
   const floor = settings.brightness;
   cells = [];
   lastMove = performance.now(); // make sure the fresh grid gets drawn
+  // Brightness of every screen pixel. Where pictures overlap, the brighter one wins,
+  // so neither's dark background covers the other; topAt remembers which picture that was.
+  const lumAt = new Float32Array(w * h), topAt = new Uint8Array(w * h);
+  layers.forEach((px, n) => {
+    for (let p = 0, i = 0; p < w * h; p++, i += 4) {
+      const v = (px[i] * 0.3 + px[i+1] * 0.59 + px[i+2] * 0.11) * (px[i+3] / 255);
+      if (v > lumAt[p]) { lumAt[p] = v; topAt[p] = n; }
+    }
+  });
+  let ref = 1; // brightest pixel on screen, for stretching dim pictures to full contrast
+  for (const v of lumAt) if (v > ref) ref = v;
+  const glyphs = settings.detail && glyphMasks(CELL);
   for (let y = CELL / 2; y < h; y += CELL) {
     for (let x = CELL / 2; x < w; x += CELL) {
-      const i = ((y | 0) * w + (x | 0)) * 4;
-      // where pictures overlap, the brighter one wins, so neither's dark background covers the other
-      let lum = 0, top = 0;
-      layers.forEach((px, n) => {
-        const v = (px[i] * 0.3 + px[i+1] * 0.59 + px[i+2] * 0.11) * (px[i+3] / 255);
-        if (v > lum) { lum = v; top = n; }
+      let lum = lumAt[(y | 0) * w + (x | 0)], at = (y | 0) * w + (x | 0), rest;
+      if (glyphs) {
+        const m = matchCell(lumAt, w, h, Math.floor(x - CELL / 2), Math.floor(y - CELL / 2), CELL, glyphs, ref);
+        if (!m) continue;
+        ({lum, at} = m); rest = m.ch;
+      } else if (lum <= 18) continue;
+      cells.push({
+        x, y, key: shown[topAt[at]].key,
+        ch: randomDigit(),
+        rest,                                              // shape-matched character shown while cold (detail mode)
+        base: (floor + (lum / 255) * (1 - floor)) * 255,  // gray level from the painting
+        heat: 0,
       });
-      if (lum > 18) {
-        cells.push({
-          x, y, key: shown[top].key,
-          ch: randomDigit(),
-          base: (floor + (lum / 255) * (1 - floor)) * 255,  // gray level from the painting
-          heat: 0,
-        });
-      }
     }
   }
   // Soft-edged silhouette of the digit grid, used as the mask for the frosted sky.
@@ -411,7 +472,7 @@ function frame() {
 
 function draw() {
   ctx.clearRect(0, 0, innerWidth, innerHeight);
-  ctx.font = `${settings.bold ? 'bold ' : ''}${settings.fontSize}px ui-monospace, monospace`;
+  ctx.font = font();
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   const R = settings.glowRadius; // scramble radius around cursor
@@ -426,7 +487,7 @@ function draw() {
     // blend from the digit's gray toward the glow color as it heats up
     const t = c.heat, b = c.base;
     ctx.fillStyle = `rgb(${b + (gr - b) * t} ${b + (gg - b) * t} ${b + (gb - b) * t})`;
-    ctx.fillText(c.ch, c.x, c.y);
+    ctx.fillText(c.rest && t < 0.05 ? c.rest : c.ch, c.x, c.y); // hot cells flip digits, cold ones show their shape
   }
 }
 
@@ -479,10 +540,13 @@ if (!new URLSearchParams(location.search).has('wallpaper')) {
   };
   $('digits').value = settings.digits;
   $('bold').checked = settings.bold;
+  $('detail').checked = settings.detail;
   syncGlow(); syncThumb();
   $('glow').oninput = e => { settings.glow = e.target.value; syncGlow(); applySettings(); };
-  $('digits').oninput = e => { settings.digits = e.target.value; applySettings(); };
-  $('bold').onchange = e => { settings.bold = e.target.checked; applySettings(); };
+  // characters, weight and size change which shape fits each cell, so these rebuild the grid
+  $('digits').oninput = e => { settings.digits = e.target.value; queueBuild(); };
+  $('bold').onchange = e => { settings.bold = e.target.checked; queueBuild(); };
+  $('detail').onchange = e => { settings.detail = e.target.checked; queueBuild(); };
   $('bgPick').onclick = () => $('bgFile').click();
   $('bgNone').onclick = () => { settings.background = ''; syncThumb(); applySettings(); };
   $('bgFile').onchange = e => {
@@ -497,7 +561,7 @@ if (!new URLSearchParams(location.search).has('wallpaper')) {
   // Sliders, each with a number box you can type into. Percent values are typed as 0-100.
   // [key, group, label, min, max, step, percent?, does it change the digit grid?, unit]
   const SLIDERS = [
-    ['fontSize',    'digits',     'Font size',              4,   20,  1,    false, false],
+    ['fontSize',    'digits',     'Font size',              4,   20,  1,    false, true],
     ['spacing',     'digits',     'Spacing',                4,   20,  1,    false, true],
     ['brightness',  'digits',     'Darkest digit',          0.2, 1,   0.05, true,  true],
     ['glowRadius',  'glow',       'Size',                   40,  600, 10,   false, false],

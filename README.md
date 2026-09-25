@@ -38,7 +38,7 @@ Not yet but open to collaborate.
 ## How it works
 
 - A grayscale image of the hands is embedded in the file as a data URI.
-- The page samples the image's brightness on a grid and places a digit at each lit pixel, dimmer or brighter to match the painting's shading.
+- The page splits the image into a grid of small cells. For each cell it picks the character whose shape best matches the picture inside it (`/` or `\` on slanted edges, `|` and `-` on straight ones, `#` and `0` on bright areas), tinted dimmer or brighter to match the painting's shading. Turn off **Detail** in the panel to get the older look, with a random digit in every lit cell.
 - Each digit tracks a "heat" value: the cursor raises it (digit flips randomly and blends toward the glow color), then it decays each frame.
 - The sky behind the hands is blurred and darkened in a soft hand-shaped patch so the digits stay readable.
 - On KDE, the desktop icon layer sits above the wallpaper and eats mouse events, so the wallpaper plugin reads the cursor with a see-through layer on top and hands it to the page.
