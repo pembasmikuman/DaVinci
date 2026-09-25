@@ -8,7 +8,7 @@ WallpaperItem {
     WebEngineView {
         id: web
         anchors.fill: parent
-        url: Qt.resolvedUrl("index.html")
+        url: Qt.resolvedUrl("index.html") + "?wallpaper"  // hides the settings button
         backgroundColor: "#0a0a0a"
     }
 
